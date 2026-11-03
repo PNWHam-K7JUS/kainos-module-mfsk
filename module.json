@@ -1,0 +1,13 @@
+﻿{
+  "id": "mfsk",
+  "name": "Olivia / MFSK",
+  "description": "Olivia, Contestia and MFSK keyboard chat inside Kainos, compatible with fldigi: every Olivia and Contestia tones / bandwidth from 4/125 to 64/2000, and MFSK4 to MFSK128L. Olivia reads signals well below the noise and finds a signal within 4 tones of where you click. Type to send, with F1 - F8 messages, and log the QSO.",
+  "version": "0.1.0",
+  "experimental": true,
+  "api": 1,
+  "minKainos": "1.0.12",
+  "entry": "Kainos.Mfsk.dll",
+  "author": "Justin Cron K7JUS",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/PNWHam-K7JUS/kainos-module-mfsk"
+}
