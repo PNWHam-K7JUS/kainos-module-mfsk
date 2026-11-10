@@ -1,4 +1,4 @@
-﻿/*  Program.cs (self-test)
+/*  Program.cs (self-test)
 
 Checks the Olivia / Contestia / MFSK modems without a radio: Olivia's block code and the MFSK varicode, then every
 mode sent and received (clean, with noise, mistuned, on the other sideband, at 44.1 kHz), noise alone printing
@@ -57,6 +57,8 @@ namespace Kainos.Mfsk.SelfTest
             SetProcessDPIAware();
             bool quick = args.Contains("--quick");
             if (args.Contains("--diag")) { diag(); return 0; }
+            paneFixes();
+            if (args.Contains("--pane")) return _fail == 0 ? 0 : 1;
             codes();
             foreach (MfskMode m in MfskMode.All)
             {
@@ -338,6 +340,97 @@ namespace Kainos.Mfsk.SelfTest
             check(got.Contains("CQ CQ de K7JUS typed while sending\n"), modeName + " TX: the audio sent decodes" + show(got));
             check(echo.ToString().Contains("CQ CQ de K7JUS typed while sending"), modeName + " TX: what's sent is echoed" + show(echo.ToString()));
             check(Math.Abs(peak - 0.501) < 0.03, modeName + " TX: peak " + peak.ToString("0.000") + " at -6 dB");
+        }
+
+        // ---- the pane: GitHub #86 (the marker while closed), #80 (<RX> / <TX> typed), #75 (scrolling, Clear) ----
+
+        private static T field<T>(object o, string name) { return (T)o.GetType().GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public).GetValue(o); }
+        private static void pump(int ms) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.ElapsedMilliseconds < ms) { Application.DoEvents(); System.Threading.Thread.Sleep(10); } }
+
+        private static void paneFixes()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "kainos-mfsk-panetest");
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            Form f = new Form { ClientSize = new Size(1000, 420), StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) };
+            FakeHost h = new FakeHost(dir, Path.Combine(dir, "data")) { Window = f, ModeName = "DIGU", Speed = 1 };
+            f.Show();
+            MfskModule mod = new MfskModule();
+            mod.Start(h);
+            pump(600);
+            check(h.MarkerLog.Count == 0, "#86 closed: no marker on the panadapter (" + string.Join(" ", h.MarkerLog) + ")");
+            h.Menus[0].Click();
+            pump(400);
+            check(h.MarkerLog.Count > 0 && h.MarkerLog[h.MarkerLog.Count - 1] != "0:none", "#86 open: the mode's marker shows");
+            h.Menus[0].Click();
+            pump(100);
+            int after = h.MarkerLog.Count;
+            pump(600);
+            check(h.MarkerLog.Count == after && h.MarkerLog.Skip(after - 2).Any(m => m.EndsWith("none")), "#86 closed again: the marker cleared and not put back (" + string.Join(" ", h.MarkerLog.Skip(Math.Max(0, after - 3))) + ")");
+
+            // #80: open, then type <TX> to start sending what's in the box
+            h.Menus[0].Click();
+            pump(300);
+            Control pane = h.Panes[0].Content;
+            MfskEngine e = field<MfskEngine>(pane, "_e");
+            TextBox box = field<TextBox>(pane, "_txText");
+            box.Text = "CQ de K7JUS ";
+            box.AppendText("<TX>");
+            pump(400);
+            check(e.Sending && !box.Text.Contains("<TX>"), "#80 typed <TX>: sending, and the tag taken out of the box (" + box.Text + ")");
+            int q0 = e.TxQueuedChars;
+            box.AppendText("pse <R");
+            pump(50);
+            int q1 = e.TxQueuedChars;
+            check(q1 - q0 == 4, "#80 a '<' that could be a tag is held back: 4 of 'pse <R' queued (" + (q1 - q0) + ")");
+            box.AppendText("X>");
+            pump(100);
+            check(e.Finishing && !box.Text.Contains("<RX>"), "#80 typed <RX>: back to receive once sent, the tag out of the box (" + box.Text + ")");
+            box.AppendText("x");        // finishing: nothing more goes
+            e.Abort();
+            pump(800);
+            box.Text = "";
+            // a '<' that isn't a tag goes out once it's clearly not one
+            h.Menus[0].Click(); pump(100); h.Menus[0].Click(); pump(300);
+            pane = h.Panes[0].Content; e = field<MfskEngine>(pane, "_e"); box = field<TextBox>(pane, "_txText");
+            box.Text = "<TX>";
+            pump(300);
+            int qb = e.TxQueuedChars;
+            box.AppendText("a<b");
+            pump(50);
+            check(e.Sending && e.TxQueuedChars - qb == 3, "#80 '<b' isn't a tag: sent (" + (e.TxQueuedChars - qb) + " of 3)");
+            e.Abort();
+            pump(800);
+
+            // #75: following the newest text, and staying put while reading back
+            RichTextBox rx = field<RichTextBox>(pane, "_rxText");
+            System.Reflection.MethodInfo append = pane.GetType().GetMethod("append", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            rx.Clear();
+            for (int i = 0; i < 200; i++) append.Invoke(pane, new object[] { "line " + i + " of the received text\n", false });
+            Func<bool> endShowing = () => rx.GetPositionFromCharIndex(rx.TextLength).Y < rx.ClientSize.Height + rx.Font.Height;
+            check(endShowing(), "#75 at the bottom: it follows the newest text");
+            rx.Select(0, 0); rx.ScrollToCaret();
+            int top = rx.GetCharIndexFromPosition(new Point(2, 2));
+            for (int i = 0; i < 50; i++) append.Invoke(pane, new object[] { "more " + i + "\n", false });
+            int top2 = rx.GetCharIndexFromPosition(new Point(2, 2));
+            check(top2 == top && !endShowing(), "#75 scrolled up to read: it stays put as text comes in (first char shown " + top + " then " + top2 + ")");
+            rx.Select(rx.TextLength, 0); rx.ScrollToCaret();
+            append.Invoke(pane, new object[] { "back at the bottom\n", false });
+            check(endShowing(), "#75 scrolled back down: it follows again");
+            KButtonClick(pane, "Clear");
+            check(rx.TextLength == 0, "#75 the Clear button clears the received text");
+
+            h.Menus[0].Click();
+            pump(200);
+            mod.Stop();
+            mod.Dispose();
+            f.Close();
+        }
+
+        private static void KButtonClick(Control root, string text)
+        {
+            foreach (Control c in root.Controls)
+                if (c.Text == text && c.GetType().Name == "KButton") { typeof(Control).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(c, new object[] { EventArgs.Empty }); return; }
+            throw new Exception("no button " + text);
         }
 
         // the window with the module running and a signal playing; a screenshot saved

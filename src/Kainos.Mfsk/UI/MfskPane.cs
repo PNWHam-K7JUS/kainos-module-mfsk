@@ -1,4 +1,4 @@
-﻿/*  MfskPane.cs
+/*  MfskPane.cs
 
 The Olivia / MFSK window: a bar (mode, receiver, squelch, reverse, pop out, options), the waterfall (click a
 signal to read it), what's received (and what's sent, in red), the box you type into (what's typed while sending
@@ -29,7 +29,7 @@ namespace Kainos.Mfsk.UI
         private readonly IKainosTheme _t;
         private readonly MfskEngine _e;
 
-        private readonly KButton _mode, _rxSel, _sql, _rev, _pop, _options;
+        private readonly KButton _mode, _rxSel, _sql, _rev, _clear, _pop, _options;
         private readonly KButton _txBtn, _rxBtn, _tuneBtn, _logBtn;
         private readonly KButton[] _macroBtn = new KButton[Macros.Count];
         private readonly Label _status, _callL, _nameL, _rstL;
@@ -74,6 +74,7 @@ namespace Kainos.Mfsk.UI
             _rxSel = btn("RX1", "The receiver listened to: RX1 or RX2");
             _sql = btn("SQL", "Squelch: text shows only from a signal this clean (click to step: off, low, medium, high, very high)");
             _rev = btn("Rev", "Reverse: the tones the other way up, for a station on the other sideband. Lower sideband (LSB / DIGL) is allowed for already.");
+            _clear = btn("Clear", "Clear the received text (GitHub #75)");
             _pop = btn("Pop out", "Docked under the panadapter, or in its own window");
             _options = btn("Options", "Station, transmit level, display and logging");
 
@@ -156,6 +157,7 @@ namespace Kainos.Mfsk.UI
             int right = Width - pad;
             _options.SetBounds(right - _t.S(64), y, _t.S(64), bh); right -= _t.S(64) + pad;
             _pop.SetBounds(right - _t.S(64), y, _t.S(64), bh); right -= _t.S(64) + pad;
+            _clear.SetBounds(right - _t.S(50), y, _t.S(50), bh); right -= _t.S(50) + pad;
             _status.SetBounds(x + pad, y, Math.Max(0, right - x - pad), bh);
 
             y += bh + pad;
@@ -210,6 +212,7 @@ namespace Kainos.Mfsk.UI
             };
             _rev.Click += (s, e) => { _host.SetSetting("rev", _e.UserReverse ? "0" : "1"); applySettings(); };
             _pop.Click += (s, e) => PopToggled?.Invoke();
+            _clear.Click += (s, e) => { _rxText.Clear(); _rxAtBottom = true; };
             _options.Click += (s, e) => optionsMenu().Show(_options, new Point(0, _options.Height));
 
             _wf.Clicked += (hz, b) =>
@@ -282,8 +285,13 @@ namespace Kainos.Mfsk.UI
 
         // ---- the timer: the waterfall, text, browser, markers and status ----
 
+        // false while the pane is closed: its timer keeps running, and without this it put the mode's marker back on the
+        // panadapter after closing had cleared it, so "OLIVIA 8/250" stayed in every mode (GitHub #86)
+        public bool Showing;
+
         private void tick()
         {
+            if (!Showing) return;
             foreach (float[] line in _e.TakeLines()) _wf.AddLine(line, MfskEngine.BinHz);
             double rx = _e.RxFreq;
             _wf.RxHz = rx;
@@ -335,33 +343,57 @@ namespace Kainos.Mfsk.UI
 
         // ---- received text ----
 
+        // New text at the end. While the newest text is showing, the box follows it; scrolled up to read, it stays put
+        // (its scroll position and any selection are put back after the text goes in), and follows again once you
+        // scroll back to the bottom. Whether to follow is worked out here, from whether the end is showing now: the
+        // box's own scrolling as text goes in or the old text is trimmed doesn't count (GitHub #75, as #64 for CW).
         private void append(string s, bool tx)
         {
             if (s.Length == 0) return;
-            bool follow = _rxAtBottom;
+            bool follow = atBottom() || _rxText.TextLength == 0;
             int selStart = _rxText.SelectionStart, selLen = _rxText.SelectionLength;
-            foreach (string part in Regex.Split(s, "(\b)"))
+            Point scroll = Point.Empty;
+            SendMessage(_rxText.Handle, EM_GETSCROLLPOS, IntPtr.Zero, ref scroll);
+            SendMessage(_rxText.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+            try
             {
-                if (part.Length == 0) continue;
-                if (part == "\b")
+                foreach (string part in Regex.Split(s, "(\b)"))
                 {
-                    if (_rxText.TextLength > 0) { _rxText.Select(_rxText.TextLength - 1, 1); _rxText.ReadOnly = false; _rxText.SelectedText = ""; _rxText.ReadOnly = true; }
-                    continue;
+                    if (part.Length == 0) continue;
+                    if (part == "\b")
+                    {
+                        if (_rxText.TextLength > 0) { _rxText.Select(_rxText.TextLength - 1, 1); _rxText.ReadOnly = false; _rxText.SelectedText = ""; _rxText.ReadOnly = true; }
+                        continue;
+                    }
+                    _rxText.Select(_rxText.TextLength, 0);
+                    _rxText.SelectionColor = tx ? _t.Tx : _t.Text;
+                    _rxText.AppendText(part);
                 }
-                _rxText.Select(_rxText.TextLength, 0);
-                _rxText.SelectionColor = tx ? _t.Tx : _t.Text;
-                _rxText.AppendText(part);
+                // the oldest third goes when it's long (only while following: not under someone reading back)
+                if (follow && _rxText.TextLength > 60000) { _rxText.Select(0, 20000); _rxText.ReadOnly = false; _rxText.SelectedText = ""; _rxText.ReadOnly = true; }
+                if (follow) _rxText.Select(_rxText.TextLength, 0);
+                else { _rxText.Select(selStart, selLen); SendMessage(_rxText.Handle, EM_SETSCROLLPOS, IntPtr.Zero, ref scroll); }
             }
-            if (_rxText.TextLength > 60000) { _rxText.Select(0, 20000); _rxText.ReadOnly = false; _rxText.SelectedText = ""; _rxText.ReadOnly = true; }
-            if (follow || selLen == 0) { _rxText.Select(_rxText.TextLength, 0); _rxText.ScrollToCaret(); }
-            else _rxText.Select(selStart, selLen);
+            finally
+            {
+                SendMessage(_rxText.Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                _rxText.Invalidate();
+            }
+            if (follow) _rxText.ScrollToCaret();
+            _rxAtBottom = follow;
         }
 
+        // the end of the text is in view (or within a line of it)
         private bool atBottom()
         {
+            if (_rxText.TextLength == 0) return true;
             Point p = _rxText.GetPositionFromCharIndex(_rxText.TextLength);
-            return p.Y < _rxText.ClientSize.Height + _t.S(20);
+            return p.Y < _rxText.ClientSize.Height + _rxText.Font.Height;
         }
+
+        private const int WM_SETREDRAW = 0x000B, EM_GETSCROLLPOS = 0x0400 + 221, EM_SETSCROLLPOS = 0x0400 + 222;
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, ref Point l);
 
         private static readonly Regex CallRx = new Regex(@"^(?=.*\d)(?=.*[A-Z])[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(/[A-Z0-9]{1,4})?$|^[A-Z0-9]{1,3}/[A-Z0-9]{3,8}$", RegexOptions.IgnoreCase);
 
@@ -446,10 +478,18 @@ namespace Kainos.Mfsk.UI
         {
             if (_e.Sending && !_e.Tuning) return;
             if (!checkStation()) return;
-            string text = _txText.Text.Replace("\r\n", "\n");
+            string box = _txText.Text;
+            // <TX> is what started it (or is just there): out of the box; <RX> in the box: send up to it, then receive
+            int tx;
+            while ((tx = box.IndexOf("<TX>", StringComparison.OrdinalIgnoreCase)) >= 0) box = box.Remove(tx, 4);
+            int rx = box.IndexOf("<RX>", StringComparison.OrdinalIgnoreCase);
+            if (rx >= 0) box = box.Remove(rx, 4);
+            if (box != _txText.Text) setBox(box);
+            string text = (rx >= 0 ? box.Substring(0, rx) : box).Replace("\r\n", "\n");
             string why = _e.StartTx(text);
             if (why != null) { status(why); return; }
-            _sentUpTo = _txText.TextLength;
+            _sentUpTo = rx >= 0 ? rx : _txText.TextLength;
+            if (rx >= 0) _e.Finish();
             _txText.Focus();
             _txText.Select(_txText.TextLength, 0);
         }
@@ -490,14 +530,62 @@ namespace Kainos.Mfsk.UI
             _txText.Select(_txText.TextLength, 0);
         }
 
-        // typing while sending: what's new at the end goes out; a backspace takes one back (sent as a backspace)
+        // typing while sending: what's new at the end goes out; a backspace takes one back (sent as a backspace).
+        // <RX> and <TX> typed in the box work as in the messages (GitHub #80): <TX> while receiving starts sending (what's
+        // in the box), <RX> while sending goes back to receive once what's before it has gone. A "<" that could be the
+        // start of one is held back until it's clearly a tag (acted on, and taken out of the box) or clearly not (sent).
+        private bool _editing;
+
         private void typed()
         {
-            if (!_e.Sending || _e.Tuning || _e.Finishing) return;
+            if (_editing) return;
             string t = _txText.Text;
-            if (t.Length > _sentUpTo) _e.AddText(t.Substring(_sentUpTo).Replace("\r\n", "\n").Replace("\r", ""));
-            else if (t.Length < _sentUpTo) _e.AddText(new string('\b', _sentUpTo - t.Length));
-            _sentUpTo = t.Length;
+            if (!_e.Sending || _e.Tuning)
+            {
+                int tx = t.IndexOf("<TX>", StringComparison.OrdinalIgnoreCase);
+                if (tx >= 0 && !_e.Sending)
+                {
+                    setBox(t.Remove(tx, 4));
+                    startTx();
+                }
+                return;
+            }
+            if (_e.Finishing) return;
+            if (t.Length < _sentUpTo) { _e.AddText(new string('\b', _sentUpTo - t.Length)); _sentUpTo = t.Length; return; }
+            string fresh = t.Substring(_sentUpTo);
+            int rx = fresh.IndexOf("<RX>", StringComparison.OrdinalIgnoreCase);
+            if (rx >= 0)
+            {
+                send(fresh.Substring(0, rx));
+                setBox(t.Remove(_sentUpTo + rx, 4));
+                _sentUpTo += rx;
+                _e.Finish();
+                return;
+            }
+            int tag = fresh.IndexOf("<TX>", StringComparison.OrdinalIgnoreCase);
+            if (tag >= 0) { setBox(t.Remove(_sentUpTo + tag, 4)); t = _txText.Text; fresh = t.Substring(_sentUpTo); }       // already sending
+            int hold = fresh.Length;
+            int lt = fresh.LastIndexOf('<');
+            if (lt >= 0 && couldBeTag(fresh.Substring(lt))) hold = lt;
+            send(fresh.Substring(0, hold));
+            _sentUpTo += hold;
+        }
+
+        private static bool couldBeTag(string s)
+        {
+            return s.Length < 4 && ("<RX>".StartsWith(s, StringComparison.OrdinalIgnoreCase) || "<TX>".StartsWith(s, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void send(string s)
+        {
+            if (s.Length > 0) _e.AddText(s.Replace("\r\n", "\n").Replace("\r", ""));
+        }
+
+        private void setBox(string text)
+        {
+            _editing = true;
+            try { _txText.Text = text; _txText.Select(_txText.TextLength, 0); }
+            finally { _editing = false; }
         }
 
         private void txEnded()

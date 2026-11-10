@@ -54,6 +54,7 @@ namespace Kainos.Mfsk
         private void open()
         {
             _pane.Open();
+            _view.Showing = true;
             _engine.Listen();
             _engine.Start();
             _view.Restore();
@@ -65,6 +66,7 @@ namespace Kainos.Mfsk
         {
             _engine.Stop();
             _pane.Close();
+            _view.Showing = false;
             _view.ClearMarkers();
             _menu.Checked = false;
             _host.SetSetting("open", "0");
@@ -73,7 +75,7 @@ namespace Kainos.Mfsk
         public void Stop()
         {
             if (_engine != null) _engine.Stop();
-            if (_view != null) _view.ClearMarkers();
+            if (_view != null) { _view.Showing = false; _view.ClearMarkers(); }
         }
 
         public void Dispose()
