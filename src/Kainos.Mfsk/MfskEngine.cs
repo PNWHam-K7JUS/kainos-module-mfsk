@@ -29,7 +29,7 @@ namespace Kainos.Mfsk
 
         // what the UI sets (picked up by the engine's thread)
         public volatile MfskMode Mode = MfskMode.ByName("Olivia 8/500");
-        public double RxFreq = 1000, TxFreq = 1000;
+        public double RxFreq = 1500, TxFreq = 1500;      // 1500 Hz, as fldigi and most Olivia nets use (GitHub #105)
         public volatile bool TxLock;                // the transmit frequency stays put when the receive one moves
         public volatile int Squelch = 25;
         public volatile bool UserReverse;           // on top of the sideband's own

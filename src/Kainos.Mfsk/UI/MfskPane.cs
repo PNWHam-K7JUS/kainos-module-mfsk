@@ -123,7 +123,7 @@ namespace Kainos.Mfsk.UI
             _txText = new TextBox
             {
                 Multiline = true, AcceptsReturn = true, BorderStyle = BorderStyle.FixedSingle, BackColor = _t.Surface, ForeColor = _t.Text,
-                Font = _t.Font(_t.S(13), false), ScrollBars = ScrollBars.None,
+                Font = _t.Font(_t.S(13), false), ScrollBars = ScrollBars.Vertical,     // a long message can be scrolled back through (GitHub #105)
             };
             Controls.Add(_txText);
 
@@ -274,8 +274,8 @@ namespace Kainos.Mfsk.UI
         public void Restore()
         {
             double hz;
-            if (double.TryParse(_host.GetSetting("rxfreq", "1000"), NumberStyles.Float, CultureInfo.InvariantCulture, out hz) && hz > 100 && hz < 3500) _e.TuneTo(hz, false);
-            if (double.TryParse(_host.GetSetting("txfreq", "1000"), NumberStyles.Float, CultureInfo.InvariantCulture, out hz) && hz > 100 && hz < 3500 && _e.TxLock) _e.TxFreq = hz;
+            if (double.TryParse(_host.GetSetting("rxfreq", "1500"), NumberStyles.Float, CultureInfo.InvariantCulture, out hz) && hz > 100 && hz < 3500) _e.TuneTo(hz, false);
+            if (double.TryParse(_host.GetSetting("txfreq", "1500"), NumberStyles.Float, CultureInfo.InvariantCulture, out hz) && hz > 100 && hz < 3500 && _e.TxLock) _e.TxFreq = hz;
         }
 
         private void refreshMacros()
@@ -377,7 +377,9 @@ namespace Kainos.Mfsk.UI
             finally
             {
                 SendMessage(_rxText.Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
-                _rxText.Invalidate();
+                // all of it, frame and scroll bar too: Invalidate() alone could leave stale blocks after a
+                // stretch with drawing off, as in NR4A's screenshot (GitHub #105)
+                RedrawWindow(_rxText.Handle, IntPtr.Zero, IntPtr.Zero, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
             }
             if (follow) _rxText.ScrollToCaret();
             _rxAtBottom = follow;
@@ -392,6 +394,8 @@ namespace Kainos.Mfsk.UI
         }
 
         private const int WM_SETREDRAW = 0x000B, EM_GETSCROLLPOS = 0x0400 + 221, EM_SETSCROLLPOS = 0x0400 + 222;
+        private const uint RDW_INVALIDATE = 0x1, RDW_ERASE = 0x4, RDW_ALLCHILDREN = 0x80, RDW_FRAME = 0x400;
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool RedrawWindow(IntPtr h, IntPtr rect, IntPtr rgn, uint flags);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, ref Point l);
 
@@ -491,7 +495,7 @@ namespace Kainos.Mfsk.UI
             _sentUpTo = rx >= 0 ? rx : _txText.TextLength;
             if (rx >= 0) _e.Finish();
             _txText.Focus();
-            _txText.Select(_txText.TextLength, 0);
+            _txText.Select(_txText.TextLength, 0); _txText.ScrollToCaret();
         }
 
         private void finishTx()
@@ -527,7 +531,7 @@ namespace Kainos.Mfsk.UI
             if (rx) _e.Finish();
             if (m.Label.Trim() == "73" && _host.GetSetting("log73", "1") == "1" && _call.Text.Trim().Length > 0) _logAfterTx = true;
             _txText.Focus();
-            _txText.Select(_txText.TextLength, 0);
+            _txText.Select(_txText.TextLength, 0); _txText.ScrollToCaret();
         }
 
         // typing while sending: what's new at the end goes out; a backspace takes one back (sent as a backspace).
@@ -584,7 +588,7 @@ namespace Kainos.Mfsk.UI
         private void setBox(string text)
         {
             _editing = true;
-            try { _txText.Text = text; _txText.Select(_txText.TextLength, 0); }
+            try { _txText.Text = text; _txText.Select(_txText.TextLength, 0); _txText.ScrollToCaret(); }
             finally { _editing = false; }
         }
 

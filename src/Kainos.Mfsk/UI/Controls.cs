@@ -61,7 +61,7 @@ namespace Kainos.Mfsk.UI
     {
         private readonly IKainosTheme _t;
         public double LoHz = 0, HiHz = 3000;
-        public double RxHz = 1000, TxHz = 1000, Width_Hz = 50;
+        public double RxHz = 1500, TxHz = 1500, Width_Hz = 50;
         public bool TxLocked;
         public float RangeDb = 30;
         public double[] Others;                 // the browser's signals, marked small along the scale

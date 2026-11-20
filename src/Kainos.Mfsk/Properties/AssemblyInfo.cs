@@ -9,6 +9,6 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyCopyright("Copyright (C) 2026 Justin Cron K7JUS, GPLv3 or later")]
 [assembly: ComVisible(false)]
 [assembly: Guid("be28cb48-bb6e-4ae4-a834-50bbef94f5ac")]
-[assembly: AssemblyVersion("0.1.1.0")]
-[assembly: AssemblyFileVersion("0.1.1.0")]
+[assembly: AssemblyVersion("0.1.2.0")]
+[assembly: AssemblyFileVersion("0.1.2.0")]
 [assembly: InternalsVisibleTo("Kainos.Mfsk.SelfTest")]
